@@ -2,13 +2,13 @@
 # License: GNU General Public License (GPL), version 3 or above
 
 """This Beancount plugin validates that each Beancount file that contains 2 or
-more directives is strictly chronologically ordered. I.e., no directive that
-occurs later in a given file (according to file order) has a date that occurs
-earlier (in calendar order) than a previous directive in the same file.
+more transactions is strictly chronologically ordered. I.e., no transaction
+that occurs later in a given file (in file order) has a date that occurs
+earlier (in calendar order) than a previous transaction in the same file.
 
 While Beancount by default doesn't care about file ordering of directives,
-ensuring strict file ordering is a useful check to avoid certain kinds of
-booking errors, e.g., copy-pasting an old transaction to much later in a file,
+ensuring in-file date ordering on transaction is a useful check to avoid
+certain kinds of booking errors, e.g., copy-pasting an old transaction,
 forgetting to bump its date.
 
 """
@@ -58,12 +58,12 @@ def txns_by_file(entries):
 
 def validate_date_ordering(entries):
     """Ensure that a given list of entries is chronologically ordered, from oldest
-    to most recent date
+    to newest
 
     Args:
       entries: a list of directives
     Returns:
-      a list of new errors, if any
+      a list of FileOrderingError errors, if any
 
     """
     errors = []
@@ -73,7 +73,7 @@ def validate_date_ordering(entries):
         if prev_date and entry.date < prev_date:
             errors.append(FileOrderingError(
                 entry.meta,
-                'Date {} appears after {}, violating in-file date ordering'
+                'Date {} occurs after {}, violating in-file date ordering'
                 .format(entry.date, prev_date),
                 entry))
 
@@ -83,15 +83,14 @@ def validate_date_ordering(entries):
 
 
 def validate_file_ordering(entries, options_map):
-    """Traverse all directives and ensure that, within the same file, their line
-    numbers are strictly increasing. This implies that directives are sorted by
-    date in all processed beancount files.
+    """Traverse all transactions in file order and ensure that, within the same
+    file, their dates are strictly increasing.
 
     Args:
-      entries: A list of directives.
-      unused_options_map: An options map.
+      entries: a list of directives
+      options_map: an options map (unused)
     Returns:
-      A list of new errors, if any were found.
+      a list of new errors, if any
 
     """
     errors = []
