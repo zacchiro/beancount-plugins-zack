@@ -1,5 +1,5 @@
 # Copyright (C) 2016 Stefano Zacchiroli <zack@upsilon.cc>
-# License: GNU General Public License (GPL), version 3 or above
+# License: GNU General Public License (GPL), version 2 or above
 
 """This Beancount plugin validates that each Beancount file that contains 2 or
 more transactions is strictly chronologically ordered. I.e., no transaction
