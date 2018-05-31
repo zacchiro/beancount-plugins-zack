@@ -34,7 +34,7 @@ def parse_keys(config_str):
     return config_str.split(',')
 
 
-def validate_documents(entries, options_map, config_str=''):
+def validate_documents(entries, options_map, config_str=None):
     """Ensure that "document" metadata keys correspond to existing files
 
     Args:
@@ -47,7 +47,9 @@ def validate_documents(entries, options_map, config_str=''):
     """
     errors = []
 
-    document_keys = parse_keys(config_str)
+    document_keys = DEFAULT_KEYS
+    if config_str is not None:
+        document_keys = parse_keys(config_str)
 
     for entry in entries:
         for key in document_keys:
