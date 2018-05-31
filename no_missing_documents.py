@@ -9,7 +9,7 @@ The list of metadata keys considered to be documents default to the single key
 "document". The default can be overridden passing a configuration string, which
 should be a comma-separated list of metadata keys, e.g.::
 
-    plugin "missing_documents" "receipt,statement,invoice"
+    plugin "no_missing_documents" "receipt,statement,invoice"
 
 """
 
