@@ -8,7 +8,6 @@ The following plugins are currently available:
 
 - **file_ordering**: enforces strict date ordering within individual Beancount
   files
-
 - **no_missing_documents**: makes sure that documents referenced from Beancount
   exist as files on disk
 
