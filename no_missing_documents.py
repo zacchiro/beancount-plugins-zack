@@ -45,13 +45,15 @@ def parse_keys(config_str):
     return config_str.split(',')
 
 
-def check_missing(entry, document):
+def check_missing(entry, doc_path):
     errors = []
 
-    if not os.path.isfile(document):
+    doc_path = os.path.expanduser(doc_path)
+
+    if not os.path.isfile(doc_path):
         errors.append(DocumentNotFoundError(
             entry.meta,
-            'Document not found: {}'.format(document),
+            'Document not found: {}'.format(doc_path),
             entry))
 
     return errors
