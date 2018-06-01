@@ -49,6 +49,9 @@ def check_missing(entry, doc_path):
     errors = []
 
     doc_path = os.path.expanduser(doc_path)
+    if 'filename' in entry.meta:
+        doc_path = os.path.join(os.path.dirname(entry.meta['filename']),
+                                doc_path)
 
     if not os.path.isfile(doc_path):
         errors.append(DocumentNotFoundError(
