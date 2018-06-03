@@ -10,12 +10,40 @@ be passed to the plugin as a configuration string, e.g.::
     plugin "mybeancount.public.validate" "validate.yaml"
 
 
-Rules matching
---------------
+Rules
+-----
 
-By default rules are applied to all Beancount transactions. You can override
-the default using the "target" property of rules match, which can be an entry
-type name, a list of them, or the special value "all", e.g.::
+A rule is a pair <match, schema>, where the match defines to which Beancount
+elements the rule applies, and schema the constraint to be enforced on matching
+elements. The rules file is hence a list of rules, expressed in YAML syntax,
+like this::
+
+      - match:
+          # rule 1's match goes here
+        schema:
+          # rule 1's constraint goes here
+
+      - match:
+          # rule 2's match
+        schema:
+          # rule 2's constraint
+
+      - match:
+          # rule 3's match
+        schema:
+          # rule 3's constraint
+
+    - # etc.
+
+
+Matches
+-------
+
+By default rules are applied to Beancount transactions. You can override the
+default using the "target" property of matches, which can be the name of a
+top-level Beancount entries ("transaction", "open", "document", etc.),
+"posting" (meaning individual transaction postings), or the special value "all"
+(meaning all top-level entries). Examples::
 
     - match:
         target: transaction  # this is default, apply rule to transactions
@@ -33,12 +61,62 @@ type name, a list of them, or the special value "all", e.g.::
       ...
 
     - match:
-        target: all  # apply rule to to all entries
+        target: all  # apply rule to to all top-level entries
       ...
+
+    - match:
+        target: posting  # apply rule to individual postings
+      ...
+
+
+Schemas
+-------
+
+TODO document schemas here
+
+
+Validated elements
+------------------
+
+Schema validation is enforced on Beancount elements which conforms with the
+definitions found in the beancount.core.data module, after some "massaging"
+meant to ease data validation. In particular, the following transformations
+are applied before validation:
+
+* lifting from namedtuples to nested dictionaries: the tuple structure of
+  beancount.core.data is transformed to nested dictionaries, using the
+  _asdict() method of namedtuples recursively. This allow to uniformly traverse
+  the AST using Cerberus schemas (Cerberus doesn't allow to validate
+  attributes). For instance, you can pretend 'meta' is a key of transaction
+  directives, even if in beancount.core.data it is a namedtuple attribute.
+
+* propagation of metadata from transactions to postings. For instance, given
+  the following input transaction::
+
+      1970-01-01 * "grocery"
+        author: "zack"
+        Expenses:Grocery      10.00 EUR
+          foo: "bar"
+        Assets:Checking
+
+  what validators will actually validate is::
+
+      1970-01-01 * "grocery"
+        author: "zack"
+        Expenses:Grocery      10.00 EUR
+          foo: "bar"
+          author: "zack"
+        Assets:Checking
+          author: "zack"
+
+Note that these transformations are in effect only for validation and are
+discarded afterwards. The set of directives returned by this plugin are
+unchanged w.r.t. its input.
 
 """
 
 import collections
+import copy
 import logging
 import re
 import yaml
@@ -79,6 +157,7 @@ def parse_target(target_str):
         'note': data.Note,
         'open': data.Open,
         'pad': data.Pad,
+        'posting': data.Posting,
         'price': data.Price,
         'query': data.Query,
         'transaction': data.Transaction,
@@ -86,7 +165,12 @@ def parse_target(target_str):
     return map[target_str.lower()]
 
 
-def entry_to_dict(entry):
+def load_cerberus_rule(check):
+    # TODO implement heuristics here to reduce schema verbosity
+    return check
+
+
+def element_to_dict(entry):
     """lift a Beancount entry to a (nested) dict structure, so that rules can be
     checked by uniformly traversing nested dictionaries
 
@@ -116,8 +200,23 @@ def txn_has_account(txn_dict, account_RE):
                    txn_dict['postings']))
 
 
-def rule_applies(rule, entry):
-    """return True iff a rule should be applied to a Beancount entry"""
+def propagate_meta(from_elt, to_elt):
+    """update metadata of to_elt Beacount element using from_elt's ones
+
+    WARNING: to_elt is both returned and modified in place
+
+    """
+    if from_elt.meta:
+        if not to_elt.meta:
+            to_elt.meta = {}
+        # XXX we should probably blacklist 'filename' and 'lineno' here
+        to_elt.meta.update(from_elt.meta)
+
+    return to_elt
+
+
+def rule_applies(rule, element):
+    """return True iff a rule should be applied to a Beancount element"""
     (match, _check) = rule
 
     if match is None:  # catch all match
@@ -127,6 +226,7 @@ def rule_applies(rule, entry):
     if 'target' in match:
         target = match['target']
         if isinstance(target, str):
+            # TODO this forbids merging 'all' with 'posting'; make it possible
             if target == 'all':
                 targets = ALL_TARGETS
             else:
@@ -137,13 +237,17 @@ def rule_applies(rule, entry):
             logging.warn('invalid target for rule {}, using default'
                          .format(rule))
 
-    if not any(filter(partial(isinstance, entry), targets)):
+    if not any(filter(partial(isinstance, element), targets)):
         return False  # current entry is not an instance of any target
 
-    entry_d = entry_to_dict(entry)
-    if isinstance(entry, data.Transaction) and 'has_account' in match:
-        if not txn_has_account(entry_d,
-                               re.compile(match['has_account'].strip('/'))):
+    element_d = element_to_dict(element)
+    if 'account' in match:
+        account_RE = re.compile(match['account'].strip('/'))
+        if isinstance(element, data.Transaction) \
+           and not txn_has_account(element_d, account_RE):
+            return False
+        if isinstance(element, data.Posting) \
+           and not account_RE.search(element.account):
             return False
 
     # TODO check dict "path"
@@ -151,20 +255,20 @@ def rule_applies(rule, entry):
     return True
 
 
-def rule_validates(rule, entry):
-    """return True iff a rule validates a Beancount entry
+def rule_validates(rule, element):
+    """return True iff a rule validates a Beancount element
 
     precondition: it has already been established (e.g., using rule_applies)
-    that the rule should be applied to this entry
+    that the rule should be applied to this element
 
     """
     (_match, check) = rule
 
     validator = Validator(check)
     validator.allow_unknown = True
-    entry_d = entry_to_dict(entry)
+    element_d = element_to_dict(element)
 
-    return validator.validate(entry_d)
+    return validator.validate(element_d)
 
 
 def validate_entry(entry, rules):
@@ -173,15 +277,25 @@ def validate_entry(entry, rules):
     Returns:
       a list of errors, if any
     """
+
+    def apply_rule(rule, element, entry):
+        if rule_applies(rule, element):
+            if not rule_validates(rule, element):
+                return [ValidationError(
+                    entry.meta,
+                    '{} offends rule {}'.format(element, rule),
+                    entry)]
+        return []
+
     errors = []
 
-    for rule in rules:
-        if rule_applies(rule, entry):
-            if not rule_validates(rule, entry):
-                errors.append(ValidationError(
-                    entry.meta,
-                    'Fails validation rule {}'.format(rule),
-                    entry))
+    for rule in rules:  # validate top-level entries
+        errors.extend(apply_rule(rule, entry, entry))
+
+    if isinstance(entry, data.Transaction):  # validate txn postings
+        for posting in entry.postings:
+            posting = propagate_meta(entry, copy.deepcopy(posting))
+            errors.extend(apply_rule(rule, posting, entry))
 
     return errors
 
@@ -199,7 +313,7 @@ def validate(entries, options_map, rules_file):
 
     """
     # parse rules as a list of <match, check> pairs
-    rules = [(rule['match'], {k: rule[k] for k in rule if k != 'match'})
+    rules = [(rule['match'], load_cerberus_rule(rule['schema']))
              for rule in yaml.load(open(rules_file))]
 
     errors = []
