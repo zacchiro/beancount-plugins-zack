@@ -302,10 +302,10 @@ def validate_entry(entry, rules):
     for rule in rules:  # validate top-level entries
         errors.extend(apply_rule(rule, entry, entry))
 
-    if isinstance(entry, data.Transaction):  # validate txn postings
-        for posting in entry.postings:
-            posting = propagate_meta(entry, copy.deepcopy(posting))
-            errors.extend(apply_rule(rule, posting, entry))
+        if isinstance(entry, data.Transaction):  # validate txn postings
+            for posting in entry.postings:
+                posting = propagate_meta(entry, copy.deepcopy(posting))
+                errors.extend(apply_rule(rule, posting, entry))
 
     return errors
 
