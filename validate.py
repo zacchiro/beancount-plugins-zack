@@ -133,7 +133,7 @@ import yaml
 
 from beancount.core import data
 from cerberus import Validator
-from functools import partial, reduce
+from functools import partial
 
 
 __plugins__ = ('validate',)
@@ -149,14 +149,6 @@ ValidationError = collections.namedtuple(
 
 ALL_TARGETS = data.ALL_DIRECTIVES
 DEFAULT_TARGETS = [data.Transaction]
-
-
-def dict_lookup(d, path):
-    """recursive lookup in nested dictionaries"""
-    try:
-        return reduce(dict.__getitem__, path, d)
-    except KeyError:
-        return None
 
 
 def parse_target(target_str):
@@ -222,12 +214,41 @@ def propagate_meta(from_elt, to_elt):
     return to_elt
 
 
+def load_rule(rule):
+    def new_validator(schema):
+        v = Validator(schema)
+        v.allow_unknown = True
+
+        return v
+
+    try:  # Cerberus validators used for matching
+        rule['match']['schema'] = new_validator(rule['match']['schema'])
+    except KeyError:
+        pass
+
+    try:  # Cerberus validators used for enforcement
+        rule['constraint'] = new_validator(rule['constraint'])
+    except KeyError:
+        pass
+
+    try:  # account regexs
+        account = rule['match']['account']
+        if account.startswith('/') and account.endswith('/'):
+            rule['match']['account'] = re.compile(account.strip('/'))
+        else:  # not a regex, enforce strict string matching
+            rule['match']['account'] = re.compile('^{}$'.format(account))
+    except KeyError:
+        pass
+
+    return rule
+
+
 def rule_applies(rule, element):
     """return True iff a rule should be applied to a Beancount element
 
     """
     match = rule['match']
-    if match is None:  # catch all match
+    if match is None:  # catch-all match
         return True
 
     targets = DEFAULT_TARGETS
@@ -250,7 +271,7 @@ def rule_applies(rule, element):
 
     element_d = element_to_dict(element)
     if 'account' in match:
-        account_RE = re.compile(match['account'].strip('/'))
+        account_RE = match['account']
         if isinstance(element, data.Transaction) \
            and not txn_has_account(element_d, account_RE):
             return False
@@ -258,11 +279,8 @@ def rule_applies(rule, element):
            and not account_RE.search(element.account):
             return False
 
-    if 'schema' in match:
-        validator = Validator(match['schema'])
-        validator.allow_unknown = True
-        if not validator.validate(element_d):
-            return False
+    if 'schema' in match and not match['schema'].validate(element_d):
+        return False
 
     return True
 
@@ -274,11 +292,7 @@ def rule_validates(rule, element):
     that the rule should be applied to this element
 
     """
-    validator = Validator(rule['constraint'])
-    validator.allow_unknown = True
-    element_d = element_to_dict(element)
-
-    return validator.validate(element_d)
+    return rule['constraint'].validate(element_to_dict(element))
 
 
 def validate_entry(entry, rules):
@@ -322,7 +336,7 @@ def validate(entries, options_map, rules_file):
       ValidationError errors (if any)
 
     """
-    rules = yaml.load(open(rules_file))
+    rules = list(map(load_rule, yaml.load(open(rules_file))))
 
     errors = []
     for entry in entries:
