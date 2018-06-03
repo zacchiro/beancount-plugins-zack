@@ -11,42 +11,53 @@ be passed to the plugin as a configuration string, e.g.::
 
 
 Rules
------
+=====
 
-A rule is a pair <match, schema>, where the match defines to which Beancount
-elements the rule applies, and schema the constraint to be enforced on matching
-elements. The rules file is hence a list of rules, expressed in YAML syntax,
+A rule is conceptually a pair <match, constraint>, where the match defines to
+which Beancount elements the rule applies, and constraint(s) to be enforced on
+matching elements. Additional, a rule description is required for ease of rule
+reference. The rules file is hence a list of rules, expressed in YAML syntax,
 like this::
 
-      - match:
+      - description: rule 1's description
+        match:
           # rule 1's match goes here
-        schema:
+        constraint:
           # rule 1's constraint goes here
 
-      - match:
+      - description: rule 1's description
+        match:
           # rule 2's match
-        schema:
+        constraint:
           # rule 2's constraint
 
-      - match:
+      - description: rule 1's description
+        match:
           # rule 3's match
-        schema:
+        constraint:
           # rule 3's constraint
 
     - # etc.
 
 
+Constraints
+===========
+
+TODO document constraints here, pointing to Cerberus
+
+
 Matches
--------
+=======
 
 By default rules are applied to Beancount transactions. You can override the
-default using the "target" property of matches, which can be the name of a
-top-level Beancount entries ("transaction", "open", "document", etc.),
+default using the "target" property of match sections; its value can be the
+name of a top-level Beancount entry ("transaction", "open", "document", etc.),
 "posting" (meaning individual transaction postings), or the special value "all"
-(meaning all top-level entries). Examples::
+(meaning all top-level entries). You can also use a list of those values to
+match multiple Beancount elements at once. Examples::
 
     - match:
-        target: transaction  # this is default, apply rule to transactions
+        target: transaction  # the default: apply rule to transactions
       ...
 
     - match:
@@ -54,7 +65,7 @@ top-level Beancount entries ("transaction", "open", "document", etc.),
       ...
 
     - match:
-        target:  # apply rule to transactions, open, and document entries
+        target:  # apply rule to transaction, open, and document entries
           - document
           - open
           - transaction
@@ -65,33 +76,32 @@ top-level Beancount entries ("transaction", "open", "document", etc.),
       ...
 
     - match:
-        target: posting  # apply rule to individual postings
+        target: posting  # apply rule to individual transaction postings
       ...
 
+TODO document "account" match property here
 
-Schemas
--------
-
-TODO document schemas here
+TODO document "schema" match property here
 
 
-Validated elements
-------------------
+Validation data model
+=====================
 
-Schema validation is enforced on Beancount elements which conforms with the
-definitions found in the beancount.core.data module, after some "massaging"
-meant to ease data validation. In particular, the following transformations
-are applied before validation:
+Constraints are enforced on Beancount elements which conforms with the
+definitions found in the :mod:`beancount.core.data` module, after some
+"massaging" to ease data validation. In particular, the following
+transformations are applied before validation:
 
-* lifting from namedtuples to nested dictionaries: the tuple structure of
-  beancount.core.data is transformed to nested dictionaries, using the
-  _asdict() method of namedtuples recursively. This allow to uniformly traverse
-  the AST using Cerberus schemas (Cerberus doesn't allow to validate
-  attributes). For instance, you can pretend 'meta' is a key of transaction
-  directives, even if in beancount.core.data it is a namedtuple attribute.
+* conversion from nested namedtuples to nested dictionaries: the tuple
+  structure of beancount.core.data is transformed to nested dictionaries, using
+  the _asdict() method of namedtuples recursively. This allow to validate
+  Beancount abstract syntax trees (ASTs) using Cerberus schemas (Cerberus
+  doesn't allow to validate attributes). For instance, you can pretend 'meta'
+  is a key of transaction directives, even if in beancount.core.data it is a
+  namedtuple attribute.
 
-* propagation of metadata from transactions to postings. For instance, given
-  the following input transaction::
+* propagation of metadata from transactions down to postings. For instance,
+  given the following input transaction::
 
       1970-01-01 * "grocery"
         author: "zack"
@@ -99,7 +109,7 @@ are applied before validation:
           foo: "bar"
         Assets:Checking
 
-  what validators will actually validate is::
+  what validation rules will actually consider is::
 
       1970-01-01 * "grocery"
         author: "zack"
@@ -109,7 +119,7 @@ are applied before validation:
         Assets:Checking
           author: "zack"
 
-Note that these transformations are in effect only for validation and are
+Note that these transformations are in effect only during validation and are
 discarded afterwards. The set of directives returned by this plugin are
 unchanged w.r.t. its input.
 
@@ -129,6 +139,9 @@ from functools import partial, reduce
 __plugins__ = ('validate',)
 
 
+RuleError = collections.namedtuple(
+    'RuleError',
+    'source message entry')
 ValidationError = collections.namedtuple(
     'ValidationError',
     'source message entry')
@@ -162,12 +175,7 @@ def parse_target(target_str):
         'query': data.Query,
         'transaction': data.Transaction,
     }
-    return map[target_str.lower()]
-
-
-def load_cerberus_rule(check):
-    # TODO implement heuristics here to reduce schema verbosity
-    return check
+    return map[target_str.lower()]  # TODO return RuleError if parsing fails
 
 
 def element_to_dict(entry):
@@ -175,7 +183,6 @@ def element_to_dict(entry):
     checked by uniformly traversing nested dictionaries
 
     """
-
     def lift_posting(posting):
         posting = posting._asdict()
         posting['units'] = posting['units']._asdict()
@@ -216,9 +223,10 @@ def propagate_meta(from_elt, to_elt):
 
 
 def rule_applies(rule, element):
-    """return True iff a rule should be applied to a Beancount element"""
-    (match, _check) = rule
+    """return True iff a rule should be applied to a Beancount element
 
+    """
+    match = rule['match']
     if match is None:  # catch all match
         return True
 
@@ -234,8 +242,8 @@ def rule_applies(rule, element):
         elif isinstance(target, list):
             targets = map(parse_target, target)
         else:
-            logging.warn('invalid target for rule {}, using default'
-                         .format(rule))
+            logging.warn('invalid target for rule {description}, using default'
+                         .format(**rule))
 
     if not any(filter(partial(isinstance, element), targets)):
         return False  # current entry is not an instance of any target
@@ -250,7 +258,11 @@ def rule_applies(rule, element):
            and not account_RE.search(element.account):
             return False
 
-    # TODO check dict "path"
+    if 'schema' in match:
+        validator = Validator(match['schema'])
+        validator.allow_unknown = True
+        if not validator.validate(element_d):
+            return False
 
     return True
 
@@ -262,9 +274,7 @@ def rule_validates(rule, element):
     that the rule should be applied to this element
 
     """
-    (_match, check) = rule
-
-    validator = Validator(check)
+    validator = Validator(rule['constraint'])
     validator.allow_unknown = True
     element_d = element_to_dict(element)
 
@@ -283,7 +293,7 @@ def validate_entry(entry, rules):
             if not rule_validates(rule, element):
                 return [ValidationError(
                     entry.meta,
-                    '{} offends rule {}'.format(element, rule),
+                    'Constraint violation: {description}'.format(**rule),
                     entry)]
         return []
 
@@ -312,9 +322,7 @@ def validate(entries, options_map, rules_file):
       ValidationError errors (if any)
 
     """
-    # parse rules as a list of <match, check> pairs
-    rules = [(rule['match'], load_cerberus_rule(rule['schema']))
-             for rule in yaml.load(open(rules_file))]
+    rules = yaml.load(open(rules_file))
 
     errors = []
     for entry in entries:
