@@ -9,15 +9,43 @@ be passed to the plugin as a configuration string, e.g.::
 
     plugin "mybeancount.public.validate" "validate.yaml"
 
+
+Rules matching
+--------------
+
+By default rules are applied to all Beancount transactions. You can override
+the default using the "target" property of rules match, which can be an entry
+type name, a list of them, or the special value "all", e.g.::
+
+    - match:
+        target: transaction  # this is default, apply rule to transactions
+      ...
+
+    - match:
+        target: open  # apply rule to open entries instead
+      ...
+
+    - match:
+        target:  # apply rule to transactions, open, and document entries
+          - document
+          - open
+          - transaction
+      ...
+
+    - match:
+        target: all  # apply rule to to all entries
+      ...
+
 """
 
 import collections
+import logging
 import re
 import yaml
 
 from beancount.core import data
 from cerberus import Validator
-from functools import reduce
+from functools import partial, reduce
 
 
 __plugins__ = ('validate',)
@@ -28,7 +56,8 @@ ValidationError = collections.namedtuple(
     'source message entry')
 
 
-DEFAULT_TARGET = data.Transaction
+ALL_TARGETS = data.ALL_DIRECTIVES
+DEFAULT_TARGETS = [data.Transaction]
 
 
 def dict_lookup(d, path):
@@ -42,16 +71,16 @@ def dict_lookup(d, path):
 def parse_target(target_str):
     """parse a Beancount directive type from its name in string form"""
     map = {
-        # 'close': data.Close,
-        # 'commodity': data.Commodity,
-        # 'custom': data.Custom,
-        # 'document': data.Document,
-        # 'event': data.Event,
-        # 'note': data.Note,
-        # 'open': data.Open,
-        # 'pad': data.Pad,
-        # 'price': data.Price,
-        # 'query': data.Query,
+        'close': data.Close,
+        'commodity': data.Commodity,
+        'custom': data.Custom,
+        'document': data.Document,
+        'event': data.Event,
+        'note': data.Note,
+        'open': data.Open,
+        'pad': data.Pad,
+        'price': data.Price,
+        'query': data.Query,
         'transaction': data.Transaction,
     }
     return map[target_str.lower()]
@@ -94,11 +123,22 @@ def rule_applies(rule, entry):
     if match is None:  # catch all match
         return True
 
-    target = DEFAULT_TARGET
+    targets = DEFAULT_TARGETS
     if 'target' in match:
-        target = parse_target(match['target'])
-    if not isinstance(entry, target):
-        return False
+        target = match['target']
+        if isinstance(target, str):
+            if target == 'all':
+                targets = ALL_TARGETS
+            else:
+                targets = [parse_target(target)]
+        elif isinstance(target, list):
+            targets = map(parse_target, target)
+        else:
+            logging.warn('invalid target for rule {}, using default'
+                         .format(rule))
+
+    if not any(filter(partial(isinstance, entry), targets)):
+        return False  # current entry is not an instance of any target
 
     entry_d = entry_to_dict(entry)
     if isinstance(entry, data.Transaction) and 'has_account' in match:
