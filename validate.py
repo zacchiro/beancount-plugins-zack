@@ -43,11 +43,38 @@ like this::
 Constraints
 ===========
 
-TODO document constraints here, pointing to Cerberus
+Constraints are applied to matching Beancount elements. An error would be
+returned if the selected Beancount element does not satisfy the associated
+constraint.
+
+The constraint language is that of `Cerberus
+<http://docs.python-cerberus.org/>`_, a popular data-validation framework for
+Python. Specifically, a constraint for this validate plugin is a Cerberus
+`schema <http://docs.python-cerberus.org/en/stable/schemas.html>`_. Cerberus
+schemas being Python dictionaries, you will simply express the desired schema
+in YAML syntax. Schemas will be enforced on Beancuont data structures,
+transformed to nested Python dictionaries (see "Validation data model" below).
+
+For instance, you can enforce the fact that a Beancount element has a mandatory
+"author" metadata field like this::
+
+    constraint:
+      meta:
+        schema:
+          author:
+            required: true
+
+See Cerberus `validation rules
+<http://docs.python-cerberus.org/en/stable/validation-rules.html>`_ for details
+about the full constraint language.
 
 
 Matches
 =======
+
+
+Target
+------
 
 By default rules are applied to Beancount transactions. You can override the
 default using the "target" property of match sections; its value can be the
@@ -79,9 +106,68 @@ match multiple Beancount elements at once. Examples::
         target: posting  # apply rule to individual transaction postings
       ...
 
-TODO document "account" match property here
 
-TODO document "schema" match property here
+Account
+-------
+
+The "account" property of matches allow to restrict rule application to
+Beancount elements affecting a given account. Postings will satisfy an account
+condition if the given account name is identical to the one of the posting or,
+if the "account" value is surrounded by "/", if the posting account name
+matches the given regular expression.
+
+As a shorthand, you can use "account" properties to filter transactions. A
+transaction will satisfy an "account" property if at least one of its potsings
+matches its value.
+
+Examples::
+
+    - description: checking transactions must have a bank-label
+      match:
+        target: transaction
+        account: /^Assets:.*:Checking/
+      constraint:
+        meta:
+          schema:
+            bank-label:
+              required: true
+
+    - description: cheque postings must have a cheque number
+      match:
+        target: posting
+        account: /:Cheque$/
+      constraint:
+        meta:
+          schema:
+            cheque:
+              required: true
+
+
+Schema
+------
+
+You can use the "schema" property of matches to define conditional validation
+rules of the form "if this Beancount element matches this schema (specified in
+the match section), then it must *also* match this other schema (specified in
+the constraint section)". For instance::
+
+    - description: transactions made using my card must have me as author
+      match:
+        target: transaction
+        schema:
+          meta:
+            schema:
+              card:
+                required: true
+                allowed:
+                  - "12345678"
+      constraint:
+        meta:
+          schema:
+            author:
+              required: true
+              allowed:
+                - Zack
 
 
 Validation data model
