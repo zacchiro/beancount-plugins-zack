@@ -127,13 +127,11 @@ unchanged w.r.t. its input.
 
 import collections
 import copy
-import logging
 import re
 import yaml
 
 from beancount.core import data
 from cerberus import Validator
-from functools import partial
 
 
 __plugins__ = ('validate',)
@@ -154,18 +152,19 @@ DEFAULT_TARGETS = [data.Transaction]
 def parse_target(target_str):
     """parse a Beancount directive type from its name in string form"""
     map = {
-        'close': data.Close,
-        'commodity': data.Commodity,
-        'custom': data.Custom,
-        'document': data.Document,
-        'event': data.Event,
-        'note': data.Note,
-        'open': data.Open,
-        'pad': data.Pad,
-        'posting': data.Posting,
-        'price': data.Price,
-        'query': data.Query,
-        'transaction': data.Transaction,
+        'all': ALL_TARGETS,
+        'close': [data.Close],
+        'commodity': [data.Commodity],
+        'custom': [data.Custom],
+        'document': [data.Document],
+        'event': [data.Event],
+        'note': [data.Note],
+        'open': [data.Open],
+        'pad': [data.Pad],
+        'posting': [data.Posting],
+        'price': [data.Price],
+        'query': [data.Query],
+        'transaction': [data.Transaction],
     }
     return map[target_str.lower()]  # TODO return RuleError if parsing fails
 
@@ -177,14 +176,20 @@ def element_to_dict(entry):
     """
     def lift_posting(posting):
         posting = posting._asdict()
-        posting['units'] = posting['units']._asdict()
+        posting['_type'] = data.Posting
+        units = posting['units']._asdict()
+        units['_type'] = data.Amount
+        posting['units'] = units
         # TODO handle cost and price
 
         return posting
 
+    entry_type = type(entry)
     d = entry._asdict()
-    if isinstance(entry, data.Transaction):
-        d['postings'] = map(lift_posting, d['postings'])
+    d['_type'] = entry_type
+
+    if entry_type == data.Transaction:
+        d['postings'] = list(map(lift_posting, d['postings']))
     # TODO handle other types of entries
 
     return d
@@ -200,26 +205,36 @@ def txn_has_account(txn_dict, account_RE):
 
 
 def propagate_meta(from_elt, to_elt):
-    """update metadata of to_elt Beacount element using from_elt's ones
+    """update metadata of to_elt Beancount element using from_elt's ones
+
+    both Beancount elements are expected to be in dict format
 
     WARNING: to_elt is both returned and modified in place
 
     """
-    if from_elt.meta:
-        if not to_elt.meta:
-            to_elt.meta = {}
-        # XXX we should probably blacklist 'filename' and 'lineno' here
-        to_elt.meta.update(from_elt.meta)
+    # XXX we should probably blacklist 'filename' and 'lineno' here
+    to_elt['meta'].update(from_elt['meta'])
 
     return to_elt
 
 
 def load_rule(rule):
+
     def new_validator(schema):
         v = Validator(schema)
         v.allow_unknown = True
-
         return v
+
+    try:
+        target = rule['match']['target']
+        rule['match']['target'] = DEFAULT_TARGETS
+        if target is not None:
+            if isinstance(target, str):
+                target = [target]
+            rule['match']['target'] = [t for ts in map(parse_target, target)
+                                       for t in ts]
+    except KeyError:
+        pass
 
     try:  # Cerberus validators used for matching
         rule['match']['schema'] = new_validator(rule['match']['schema'])
@@ -243,40 +258,24 @@ def load_rule(rule):
     return rule
 
 
-def rule_applies(rule, element):
-    """return True iff a rule should be applied to a Beancount element
+def rule_applies(rule, element_d):
+    """return True iff a rule should be applied to a Beancount element (as a dict)
 
     """
     match = rule['match']
     if match is None:  # catch-all match
         return True
 
-    targets = DEFAULT_TARGETS
-    if 'target' in match:
-        target = match['target']
-        if isinstance(target, str):
-            # TODO this forbids merging 'all' with 'posting'; make it possible
-            if target == 'all':
-                targets = ALL_TARGETS
-            else:
-                targets = [parse_target(target)]
-        elif isinstance(target, list):
-            targets = map(parse_target, target)
-        else:
-            logging.warn('invalid target for rule {description}, using default'
-                         .format(**rule))
-
-    if not any(filter(partial(isinstance, element), targets)):
+    if element_d['_type'] not in rule['match']['target']:
         return False  # current entry is not an instance of any target
 
-    element_d = element_to_dict(element)
     if 'account' in match:
         account_RE = match['account']
-        if isinstance(element, data.Transaction) \
+        if element_d['_type'] == data.Transaction \
            and not txn_has_account(element_d, account_RE):
             return False
-        if isinstance(element, data.Posting) \
-           and not account_RE.search(element.account):
+        if element_d['_type'] == data.Posting \
+           and not account_RE.search(element_d['account']):
             return False
 
     if 'schema' in match and not match['schema'].validate(element_d):
@@ -285,14 +284,14 @@ def rule_applies(rule, element):
     return True
 
 
-def rule_validates(rule, element):
-    """return True iff a rule validates a Beancount element
+def rule_validates(rule, element_d):
+    """return True iff a rule validates a Beancount element (as a dict)
 
     precondition: it has already been established (e.g., using rule_applies)
     that the rule should be applied to this element
 
     """
-    return rule['constraint'].validate(element_to_dict(element))
+    return rule['constraint'].validate(element_d)
 
 
 def validate_entry(entry, rules):
@@ -302,28 +301,30 @@ def validate_entry(entry, rules):
       a list of errors, if any
     """
 
-    def apply_rule(rule, element, entry):
-        if rule_applies(rule, element):
-            if not rule_validates(rule, element):
-                return [ValidationError(
-                    entry.meta,
-                    'Constraint violation: {description}'.format(**rule),
-                    entry)]
+    def apply_rule(rule, element, context):
+        if rule_applies(rule, element) and not rule_validates(rule, element):
+            return [ValidationError(
+                context.meta,
+                'Constraint violation: {description}'.format(**rule),
+                context)]
         return []
 
+    entry_dict = element_to_dict(entry)
     errors = []
 
     for rule in rules:  # validate top-level entries
-        errors.extend(apply_rule(rule, entry, entry))
+        errors.extend(apply_rule(rule, element=entry_dict, context=entry))
 
-        if isinstance(entry, data.Transaction):  # validate txn postings
-            for posting in entry.postings:
-                posting = propagate_meta(entry, copy.deepcopy(posting))
-                errors.extend(apply_rule(rule, posting, entry))
+        if entry_dict['_type'] == data.Transaction:  # validate txn postings
+            for posting in entry_dict['postings']:
+                posting = propagate_meta(entry_dict, copy.deepcopy(posting))
+                errors.extend(apply_rule(rule, element=posting, context=entry))
 
     return errors
 
 
+# from profilehooks import profile
+# @profile
 def validate(entries, options_map, rules_file):
     """Enfore data-validation rules
 
