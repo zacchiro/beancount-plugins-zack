@@ -10,8 +10,8 @@ The following plugins are currently available:
   files
 - **no_missing_documents**: makes sure that documents referenced from Beancount
   exist as files on disk
-- ***validate***: rule-based data validation for Beancount ledgers using a
-  simple Python-based DSL
+- **validate**: rule-based data validation for Beancount ledgers using a simple
+  Python-based DSL
 - **cerberus_validate**: rule-based data validation for Beancount ledgers
   using, via [Cerberus](http://docs.python-cerberus.org)
 
