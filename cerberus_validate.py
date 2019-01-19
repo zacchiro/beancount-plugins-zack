@@ -1,4 +1,4 @@
-# Copyright (C) 2018 Stefano Zacchiroli <zack@upsilon.cc>
+# Copyright (C) 2018-2019 Stefano Zacchiroli <zack@upsilon.cc>
 # License: GNU General Public License (GPL), version 2 or above
 
 """Beancount plugin that allows to enforce data validation rules on ledgers.

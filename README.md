@@ -6,12 +6,12 @@ tool.
 
 The following plugins are currently available:
 
+- **cerberus_validate**: rule-based data validation for Beancount ledgers
+  using, via [Cerberus](http://docs.python-cerberus.org)
 - **file_ordering**: enforces strict date ordering within individual Beancount
   files
 - **no_missing_documents**: makes sure that documents referenced from Beancount
   exist as files on disk
-- **validate**: rule-based data validation for Beancount ledgers using,
-  via [Cerberus](http://docs.python-cerberus.org)
 
 
 License
