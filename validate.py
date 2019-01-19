@@ -9,7 +9,7 @@ Rules must be passed to the plugin via a configuration string that must be a
 syntactically valid Python list consisting of validation rules (the string will
 be eval()-ed by the plugin, you've been warned), e.g.::
 
-  plugin "mybeancount.private.misc_checks" "[
+  plugin "mybeancount.public.validate" "[
     ('bank operations must have a bank label',
      (has_account, r('^Assets:.*:Checking')), (has_metadata, 'bank-label')),
     ('receivables must have a debtor',
