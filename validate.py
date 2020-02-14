@@ -109,7 +109,7 @@ def has_narration(narration_RE, entry):
     """return True iff entry is a Transaction whose narration matches given regex
 
     """
-    return (isinstance(entry, Transaction) and
+    return bool(isinstance(entry, Transaction) and
             re.search(narration_RE, entry.narration))
 
 
@@ -142,7 +142,7 @@ def has_payee(entry):
     """return True iff entry is a Transaction with a payee (!= None)
 
     """
-    return (isinstance(entry, Transaction) and entry.payee)
+    return bool(isinstance(entry, Transaction) and entry.payee)
 
 
 def metadata_value_eq(key, value, entry):
