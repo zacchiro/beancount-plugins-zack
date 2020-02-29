@@ -21,6 +21,8 @@ be eval()-ed by the plugin, you've been warned), e.g.::
      (has_account, r('^Income:')), (has_payee,)),
     ('payables must have a creditor',
      (has_account, r('^Liabilities:Payables')), (has_metadata, 'creditor')),
+    ('metadata project must be either debian or spi',
+     (has_metadata, 'project'), (metadata_value_in, 'project', ('debian', 'spi'))),
   ]"
 
 Each rule is a triple <description, check, constraint>. Description is a human
