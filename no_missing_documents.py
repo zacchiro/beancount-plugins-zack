@@ -10,8 +10,9 @@ the plugin:
 
 * Filenames of ``document`` directives.
 
-* Metadata associated to any directive, as long as the metadata key is in the
-  (configurable) set of keys that the plugin will consider.
+* Metadata associated to any directive, or to any posting of a transaction, as
+  long as the metadata key is in the (configurable) set of keys that the plugin
+  will consider.
 
   By default, the plugin will look only for the `document` metadata. The
   default can be overridden passing the plugin a configuration string, which
@@ -45,17 +46,23 @@ def parse_keys(config_str):
     return config_str.split(',')
 
 
-def check_missing(entry, doc_path):
+def check_missing(entry, doc_path, meta=None):
+    """Check that doc_path exists, relative paths being resolved against the
+    file where meta (default: the entry metadata) has been declared.
+
+    """
     errors = []
+    if meta is None:
+        meta = entry.meta
 
     doc_path = os.path.expanduser(doc_path)
-    if 'filename' in entry.meta:
-        doc_path = os.path.join(os.path.dirname(entry.meta['filename']),
+    if 'filename' in meta:
+        doc_path = os.path.join(os.path.dirname(meta['filename']),
                                 doc_path)
 
     if not os.path.isfile(doc_path):
         errors.append(DocumentNotFoundError(
-            entry.meta,
+            meta,
             'Document not found: {}'.format(doc_path),
             entry))
 
@@ -88,5 +95,15 @@ def validate_documents(entries, options_map, config_str=None):
         for key in document_keys:
             if key in entry.meta:
                 errors.extend(check_missing(entry, entry.meta[key]))
-                
+
+        # check requested metadata of transaction postings
+        if isinstance(entry, data.Transaction):
+            for posting in entry.postings:
+                if not posting.meta:
+                    continue
+                for key in document_keys:
+                    if key in posting.meta:
+                        errors.extend(check_missing(
+                            entry, posting.meta[key], posting.meta))
+
     return entries, errors
